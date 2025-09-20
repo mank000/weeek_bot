@@ -8,19 +8,16 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('settings', '0001_initial'),
+        ("settings", "0001_initial"),
     ]
 
     operations = [
         migrations.AddField(
-            model_name='priority',
-            name='value',
-            field=models.IntegerField(default=1, unique=True, verbose_name='ID в API WEEEK'),
+            model_name="priority",
+            name="value",
+            field=models.IntegerField(
+                default=1, unique=True, verbose_name="ID в API WEEEK"
+            ),
             preserve_default=False,
-        ),
-        migrations.AlterField(
-            model_name='settings',
-            name='default_priority',
-            field=models.ForeignKey(default=settings.models.get_default_priority, null=True, on_delete=django.db.models.deletion.SET_NULL, related_name='settings_default', to='settings.priority', verbose_name='Приоритет по-умолчанию'),
         ),
     ]

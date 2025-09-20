@@ -1,5 +1,8 @@
 import asyncio
+import re
+from datetime import datetime
 
+import requests
 from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -18,6 +21,8 @@ from telegram.ext import (
 
 from bot.utils import api, logger
 
+DJANGO_API_URL = "http://backend:8000/"
+
 (
     CHOOSING_PROJECT,
     CHOOSING_BOARD,
@@ -29,6 +34,14 @@ from bot.utils import api, logger
     ENTER_DUE_DATE,
     CHOOSING_TYPE,
 ) = range(9)
+
+
+def remove_html_tags(text):
+    """Удаляет все HTML-теги из текста"""
+    if text is None:
+        return "Без описания"
+    clean = re.compile("<.*?>")
+    return re.sub(clean, "", str(text))
 
 
 async def stop_polling(context: ContextTypes.DEFAULT_TYPE):
@@ -46,12 +59,98 @@ async def stop_polling(context: ContextTypes.DEFAULT_TYPE):
         logger.logger.info("No active poll task to stop")
 
 
+async def show_projects_page(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, page=1, query=None
+):
+    project_data = context.user_data.get("projects", [])
+    per_page = 5
+    total = len(project_data)
+    start = (page - 1) * per_page
+    end = min(start + per_page, total)
+    current = project_data[start:end]
+
+    keyboard = [
+        [InlineKeyboardButton(name, callback_data=f"select_proj_{pid}")]
+        for name, pid in current
+    ]
+
+    pagination_row = []
+    if page > 1:
+        pagination_row.append(
+            InlineKeyboardButton(
+                "⬅️ Назад", callback_data=f"page_proj_{page-1}"
+            )
+        )
+    if end < total:
+        pagination_row.append(
+            InlineKeyboardButton(
+                "➡️ Далее", callback_data=f"page_proj_{page+1}"
+            )
+        )
+
+    if pagination_row:
+        keyboard.append(pagination_row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "Выберите проект:"
+
+    if query:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+
+
+async def show_boards_page(
+    update: Update, context: ContextTypes.DEFAULT_TYPE, page=1, query=None
+):
+    boards_data = context.user_data.get("boards", [])
+    per_page = 5
+    total = len(boards_data)
+    start = (page - 1) * per_page
+    end = min(start + per_page, total)
+    current = boards_data[start:end]
+
+    keyboard = [
+        [
+            InlineKeyboardButton(
+                board.get("name", "Unnamed"),
+                callback_data=f"select_board_{board.get('id')}",
+            )
+        ]
+        for board in current
+    ]
+
+    pagination_row = []
+    if page > 1:
+        pagination_row.append(
+            InlineKeyboardButton(
+                "⬅️ Назад", callback_data=f"page_board_{page-1}"
+            )
+        )
+    if end < total:
+        pagination_row.append(
+            InlineKeyboardButton(
+                "➡️ Далее", callback_data=f"page_board_{page+1}"
+            )
+        )
+
+    if pagination_row:
+        keyboard.append(pagination_row)
+
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    text = "Выберите доску:"
+
+    if query:
+        await query.edit_message_text(text, reply_markup=reply_markup)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup)
+
+
 async def change_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await stop_polling(context)
     context.user_data.pop("selected_project", None)
     context.user_data.pop("selected_board", None)
 
-    # повторяем выбор проекта (как в start)
     projects_response = api.get_projects()
     if not projects_response or "projects" not in projects_response:
         await update.message.reply_text(
@@ -69,25 +168,7 @@ async def change_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     context.user_data["projects"] = project_data
-    project_names = [p[0] for p in project_data]
-
-    keyboard = []
-    row = []
-    for i, name in enumerate(project_names, 1):
-        row.append(KeyboardButton(str(name)))
-        if i % 5 == 0:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard, one_time_keyboard=True, resize_keyboard=True
-    )
-
-    await update.message.reply_text(
-        "Выберите проект:", reply_markup=reply_markup
-    )
+    await show_projects_page(update, context)
     return CHOOSING_PROJECT
 
 
@@ -99,7 +180,7 @@ async def change_board(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not project:
         await update.message.reply_text("Сначала выберите проект.")
         await start(update, context)
-        return CHOOSING_PROJECT  # Измените на это, чтобы продолжить диалог после start
+        return CHOOSING_PROJECT
 
     project_id = project["id"]
     boards_response = api.get_boards(project_id=project_id)
@@ -107,20 +188,7 @@ async def change_board(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if boards_response.get("success") and "boards" in boards_response:
         boards_data = boards_response["boards"]
         context.user_data["boards"] = boards_data
-
-        board_names = [
-            str(board.get("name", "Unnamed")) for board in boards_data
-        ]
-        keyboard = [[KeyboardButton(name)] for name in board_names]
-
-        reply_markup = ReplyKeyboardMarkup(
-            keyboard, one_time_keyboard=True, resize_keyboard=True
-        )
-
-        await update.message.reply_text(
-            f"Выберите доску для проекта {project['name']}:",
-            reply_markup=reply_markup,
-        )
+        await show_boards_page(update, context)
         return CHOOSING_BOARD
     else:
         await update.message.reply_text("Ошибка при получении списка досок.")
@@ -145,29 +213,110 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ConversationHandler.END
 
     context.user_data["projects"] = project_data
-    project_names = [p[0] for p in project_data]
-    keyboard = []
-    row = []
-
-    for i, name in enumerate(project_names, 1):
-        row.append(KeyboardButton(str(name)))
-        if i % 5 == 0:
-            keyboard.append(row)
-            row = []
-
-    if row:
-        keyboard.append(row)
-
-    reply_markup = ReplyKeyboardMarkup(
-        keyboard, one_time_keyboard=True, resize_keyboard=True
-    )
-
-    await update.message.reply_text(
-        "Выберите проект:",
-        reply_markup=reply_markup,
-    )
-
+    await show_projects_page(update, context)
     return CHOOSING_PROJECT
+
+
+async def handle_project_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    pid = query.data.replace("select_proj_", "")
+    projects = context.user_data.get("projects", [])
+    name = next((n for n, p in projects if str(p) == pid), None)
+
+    if not name:
+        await query.message.reply_text("Проект не найден.")
+        return CHOOSING_PROJECT
+
+    context.user_data["selected_project"] = {
+        "name": name,
+        "id": pid,
+    }
+
+    boards_response = api.get_boards(project_id=pid)
+
+    if boards_response.get("success") and "boards" in boards_response:
+        boards_data = boards_response["boards"]
+        context.user_data["boards"] = boards_data
+        await show_boards_page(update, context, query=query)
+        return CHOOSING_BOARD
+    else:
+        error_message = boards_response.get("message", "Неизвестная ошибка")
+        await query.message.reply_text(
+            f"Ошибка при получении списка досок: {error_message}"
+        )
+        return ConversationHandler.END
+
+
+async def handle_project_pagination(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.replace("page_proj_", ""))
+    await show_projects_page(update, context, page=page, query=query)
+    return CHOOSING_PROJECT
+
+
+async def handle_board_selection(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+
+    bid = query.data.replace("select_board_", "")
+    boards = context.user_data.get("boards", [])
+    name = next(
+        (b.get("name") for b in boards if str(b.get("id")) == bid), None
+    )
+
+    if not name:
+        await query.message.reply_text("Доска не найдена.")
+        return CHOOSING_BOARD
+
+    context.user_data["selected_board"] = {"name": name, "id": bid}
+    project_id = context.user_data["selected_project"]["id"]
+    chat_id = update.effective_chat.id
+
+    # Останавливаем старый polling
+    await stop_polling(context)
+
+    # Кнопки под клавиатурой
+    keyboard = ReplyKeyboardMarkup(
+        [
+            ["🔄 Поменять проект", "🔄 Поменять доску"],
+            ["Добавить задачу", "📋 Показать задачи"],
+        ],
+        resize_keyboard=True,
+        one_time_keyboard=False,
+    )
+
+    await query.edit_message_text(
+        f"✅ Вы выбрали доску: {name} (ID: {bid})",
+    )
+    await query.message.reply_text("Выберите действие:", reply_markup=keyboard)
+
+    # Запускаем новую фоновую задачу
+    task = context.application.create_task(
+        poll_board_updates(chat_id, project_id, bid, context)
+    )
+    context.user_data["poll_task"] = task
+
+    await query.message.reply_text(f"Запускаем таск для доски {bid}...")
+    return ConversationHandler.END
+
+
+async def handle_board_pagination(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+):
+    query = update.callback_query
+    await query.answer()
+    page = int(query.data.replace("page_board_", ""))
+    await show_boards_page(update, context, page=page, query=query)
+    return CHOOSING_BOARD
 
 
 async def choose_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -190,7 +339,7 @@ async def choose_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "name": project_name,
         "id": project_id,
     }
-
+    logger.logger.info(project_id)
     boards_response = api.get_boards(project_id=project_id)
 
     if boards_response.get("success") and "boards" in boards_response:
@@ -222,13 +371,72 @@ async def choose_project(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def poll_board_updates(chat_id, project_id, board_id, context):
-    """Фоновая задача: отслеживаем новые задачи и изменения."""
-    tasks_state = {}
-    column_names = {}
+    """Фоновая задача: отслеживаем новые задачи и изменения с кнопкой 'Посмотреть полностью'."""
+    tasks_state = {}  # task_id -> snapshot
+    column_names = {}  # id -> название колонки
+
+    # Загружаем список пользователей для маппинга ID к именам
+    assignees_response = api.get_assignees(board_id)
+    id_to_name = {}
+    if assignees_response.get("success") and "members" in assignees_response:
+        id_to_name = {
+            member[
+                "id"
+            ]: f"{member.get('firstName', '')} {member.get('lastName', '')}".strip()
+            for member in assignees_response["members"]
+        }
+
+    # Инициализация: загружаем текущее состояние без уведомлений
+    try:
+        columns_response = api.get_boardColumn_list(board_id)
+        if (
+            columns_response.get("success")
+            and "boardColumns" in columns_response
+        ):
+            column_names = {
+                col["id"]: col["name"]
+                for col in columns_response["boardColumns"]
+            }
+
+        response = api.get_tasks(projectId=project_id, boardId=board_id)
+        if response.get("success") and "tasks" in response:
+            tasks = response["tasks"]
+            now = datetime.now()
+            for task in tasks:
+                task_id = task["id"]
+                col_id = task.get("boardColumnId")
+                col_name = column_names.get(col_id, f"Колонка {col_id}")
+                assignees_ids = task.get("assignees", [])
+                assignees_names = (
+                    ", ".join(
+                        id_to_name.get(aid, str(aid)) for aid in assignees_ids
+                    )
+                    or "Не назначен"
+                )
+                snapshot = {
+                    "title": task.get("title"),
+                    "description": task.get("description"),
+                    "boardColumn": col_name,
+                    "isCompleted": task.get("isCompleted"),
+                    "isDeleted": task.get("isDeleted"),
+                    "assignee": assignees_names,
+                    "assignees_ids": assignees_ids,  # Храним IDs для сравнения
+                    "column_enter_time": now,
+                }
+                tasks_state[task_id] = snapshot
+            context.user_data["tasks_state"] = tasks_state
+            logger.logger.info(
+                "Initialized tasks_state with current tasks without notifications."
+            )
+    except Exception as e:
+        logger.logger.error(f"Initialization error in poll_board_updates: {e}")
+        await context.bot.send_message(
+            chat_id=chat_id, text=f"Ошибка инициализации: {e}"
+        )
+        return
 
     while True:
         try:
-            # Получаем колонки
             columns_response = api.get_boardColumn_list(board_id)
             if (
                 columns_response.get("success")
@@ -239,83 +447,188 @@ async def poll_board_updates(chat_id, project_id, board_id, context):
                     for col in columns_response["boardColumns"]
                 }
 
-            # Получаем задачи
             response = api.get_tasks(projectId=project_id, boardId=board_id)
-            if not response.get("success") or "tasks" not in response:
-                await asyncio.sleep(2)
-                continue
+            if response.get("success") and "tasks" in response:
+                tasks = response["tasks"]
+                current_ids = set()
 
-            tasks = response["tasks"]
-            current_ids = set()
+                for task in tasks:
+                    task_id = task["id"]
+                    current_ids.add(task_id)
 
-            for task in tasks:
-                task_id = task["id"]
-                current_ids.add(task_id)
-
-                col_id = task.get("boardColumnId")
-                col_name = column_names.get(col_id, f"Колонка {col_id}")
-
-                snapshot = {
-                    "title": task.get("title"),
-                    "description": task.get("description"),
-                    "boardColumn": col_name,
-                    "isCompleted": task.get("isCompleted"),
-                    "isDeleted": task.get("isDeleted"),
-                }
-
-                if task_id not in tasks_state:
-                    tasks_state[task_id] = snapshot
-                    await context.bot.send_message(
-                        chat_id=chat_id,
-                        text=f"🆕 Новая задача: {snapshot['title']} (в {snapshot['boardColumn']})",
+                    col_id = task.get("boardColumnId")
+                    col_name = column_names.get(col_id, f"Колонка {col_id}")
+                    assignees_ids = task.get("assignees", [])
+                    assignees_names = (
+                        ", ".join(
+                            id_to_name.get(aid, str(aid))
+                            for aid in assignees_ids
+                        )
+                        or "Не назначен"
                     )
-                else:
-                    old = tasks_state[task_id]
-                    changes = []
-                    if old["title"] != snapshot["title"]:
-                        changes.append(
-                            f"✏️ Название: {old['title']} → {snapshot['title']}"
-                        )
-                    if old["description"] != snapshot["description"]:
-                        changes.append("📝 Описание изменилось")
-                    if old["boardColumn"] != snapshot["boardColumn"]:
-                        changes.append(
-                            f"📂 Колонка: {old['boardColumn']} → {snapshot['boardColumn']}"
-                        )
-                    if old["isCompleted"] != snapshot["isCompleted"]:
-                        changes.append(f"⚡ Статус изменился")
-                    if (
-                        old["isDeleted"] != snapshot["isDeleted"]
-                        and snapshot["isDeleted"]
-                    ):
-                        changes.append("❌ Задача удалена")
 
-                    if changes:
+                    # Создаем базовый snapshot без column_enter_time
+                    temp_snapshot = {
+                        "title": task.get("title"),
+                        "description": task.get("description"),
+                        "boardColumn": col_name,
+                        "isCompleted": task.get("isCompleted"),
+                        "isDeleted": task.get("isDeleted"),
+                        "assignee": assignees_names,
+                        "assignees_ids": assignees_ids,
+                    }
+
+                    # Создаём inline-кнопку для просмотра полной информации
+                    keyboard = InlineKeyboardMarkup.from_button(
+                        InlineKeyboardButton(
+                            "Посмотреть полностью",
+                            callback_data=f"show_task_{task_id}",
+                        )
+                    )
+
+                    if task_id not in tasks_state:
+                        # Новая задача
+                        now = datetime.now()
+                        snapshot = {**temp_snapshot, "column_enter_time": now}
+                        tasks_state[task_id] = snapshot
                         await context.bot.send_message(
                             chat_id=chat_id,
-                            text=f"🔔 Обновление задачи {snapshot['title']}:\n"
-                            + "\n".join(changes),
+                            text=f"🆕 Новая задача: {snapshot['title']}\nКолонка: {snapshot['boardColumn']}, "
+                            f"Статус: {'Выполнена' if snapshot['isCompleted'] else 'Активна'}",
+                            reply_markup=keyboard,
                         )
+                    else:
+                        old = tasks_state[task_id]
+                        # Копируем старое время входа в колонку
+                        snapshot = {
+                            **temp_snapshot,
+                            "column_enter_time": old["column_enter_time"],
+                        }
+                        changes = []
+                        if old["title"] != snapshot["title"]:
+                            changes.append(
+                                f"✏️ Название: {old['title']} → {snapshot['title']}"
+                            )
+                        if old["description"] != snapshot["description"]:
+                            changes.append("📝 Описание изменилось")
+                        if old["assignees_ids"] != snapshot["assignees_ids"]:
+                            changes.append(
+                                f"👤 Исполнитель: {old['assignee']} → {snapshot['assignee']}"
+                            )
+                        if old["boardColumn"] != snapshot["boardColumn"]:
+                            now = datetime.now()
+                            logger.logger.info(old["column_enter_time"])
+                            time_spent = (
+                                now - old["column_enter_time"]
+                            ).total_seconds()
+                            changes.append(
+                                f"📂 Колонка: {old['boardColumn']} → {snapshot['boardColumn']}"
+                            )
+                            # Отправка на бэкенд для каждого исполнителя
+                            if old["assignees_ids"]:
+                                for aid in old["assignees_ids"]:
+                                    user = aid
+                                    user_name = id_to_name.get(aid, str(aid))
+                                    try:
+                                        backend_response = requests.post(
+                                            f"{DJANGO_API_URL}log_move/",
+                                            json={
+                                                "task_title": snapshot[
+                                                    "title"
+                                                ],
+                                                "task_id": task_id,
+                                                "from_column": old[
+                                                    "boardColumn"
+                                                ],
+                                                "to_column": snapshot[
+                                                    "boardColumn"
+                                                ],
+                                                "user_name": user_name,
+                                                "move_time": now.isoformat(),
+                                                "time_spent": time_spent,
+                                                "board_name": context.user_data[
+                                                    "selected_board"
+                                                ][
+                                                    "name"
+                                                ],
+                                            },
+                                        )
+                                        if backend_response.status_code != 201:
+                                            logger.logger.error(
+                                                f"Ошибка отправки на бэкенд: {backend_response.text}"
+                                            )
+                                    except Exception as req_err:
+                                        logger.logger.error(
+                                            f"Ошибка requests: {req_err}"
+                                        )
+                            else:
+                                # Если нет исполнителей
+                                try:
+                                    backend_response = requests.post(
+                                        f"{DJANGO_API_URL}log_move/",
+                                        json={
+                                            "task_title": snapshot["title"],
+                                            "task_id": task_id,
+                                            "from_column": old["boardColumn"],
+                                            "to_column": snapshot[
+                                                "boardColumn"
+                                            ],
+                                            "user_name": "Не назначен",
+                                            "move_time": now.isoformat(),
+                                            "time_spent": time_spent,
+                                            "board_name": context.user_data[
+                                                "selected_board"
+                                            ]["name"],
+                                        },
+                                    )
+                                    if backend_response.status_code != 200:
+                                        logger.logger.error(
+                                            f"Ошибка отправки на бэкенд: {backend_response.text}"
+                                        )
+                                except Exception as req_err:
+                                    logger.logger.error(
+                                        f"Ошибка requests: {req_err}"
+                                    )
+                            # Обновляем время входа в новую колонку
+                            snapshot["column_enter_time"] = now
+                        if old["isCompleted"] != snapshot["isCompleted"]:
+                            changes.append(
+                                f"⚡ Статус: {'Выполнена' if old['isCompleted'] else 'Активна'} → "
+                                f"{'Выполнена' if snapshot['isCompleted'] else 'Активна'}"
+                            )
+                        if (
+                            old["isDeleted"] != snapshot["isDeleted"]
+                            and snapshot["isDeleted"]
+                        ):
+                            changes.append("❌ Задача удалена")
+
+                        if changes:
+                            await context.bot.send_message(
+                                chat_id=chat_id,
+                                text=f"🔔 Обновление задачи {snapshot['title']}:\n"
+                                + "\n".join(changes),
+                                reply_markup=keyboard,
+                            )
                         tasks_state[task_id] = snapshot
 
-            # Удалённые задачи
-            removed_ids = set(tasks_state.keys()) - current_ids
-            for rid in removed_ids:
-                await context.bot.send_message(
-                    chat_id=chat_id,
-                    text=f"❌ Задача {tasks_state[rid]['title']} исчезла",
-                )
-                del tasks_state[rid]
+                context.user_data["tasks_state"] = tasks_state
 
-            await asyncio.sleep(2)
+                removed_ids = set(tasks_state.keys()) - current_ids
+                for rid in removed_ids:
+                    await context.bot.send_message(
+                        chat_id=chat_id,
+                        text=f"❌ Задача {tasks_state[rid]['title']} удалена или скрыта",
+                    )
+                    del tasks_state[rid]
+
+            await asyncio.sleep(1)
 
         except Exception as e:
             logger.logger.error(f"Ошибка в poll_board_updates: {e}")
             await context.bot.send_message(
-                chat_id=chat_id, text=f"⚠️ Ошибка: {e}"
+                chat_id=chat_id, text=f"Ошибка при получении задач: {e}"
             )
-            await asyncio.sleep(5)  # вместо break делаем паузу и продолжаем
-            continue
+            break
 
 
 async def choose_board(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -520,6 +833,17 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
     project_id = context.user_data["selected_project"]["id"]
     board_id = context.user_data["selected_board"]["id"]
 
+    # Загружаем список пользователей для маппинга ID к именам
+    assignees_response = api.get_assignees(board_id)
+    id_to_name = {}
+    if assignees_response.get("success") and "members" in assignees_response:
+        id_to_name = {
+            member[
+                "id"
+            ]: f"{member.get('firstName', '')} {member.get('lastName', '')}".strip()
+            for member in assignees_response["members"]
+        }
+
     # Получаем информацию о задаче
     task_response = api.get_task(
         task_id
@@ -536,15 +860,21 @@ async def show_task(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for col in columns_response.get("boardColumns", [])
     }
     col_name = column_names.get(col_id, f"Колонка {col_id}")
+    assignees_ids = task.get("assignees", [])
+    assignees_names = (
+        ", ".join(id_to_name.get(aid, str(aid)) for aid in assignees_ids)
+        or "Не назначен"
+    )
 
     message = (
         f"📌 {task.get('title', 'Без названия')}\n"
-        f"Описание: {task.get('description', 'Без описания')}\n"
+        f"Описание: {remove_html_tags(task.get('description', 'Без описания'))}\n"
         f"Колонка: {col_name}\n"
-        f"Исполнитель: {task.get('assignee', 'Не назначен')}\n"
+        f"Исполнитель: {assignees_names}\n"
         f"Дедлайн: {task.get('dueDate', 'Без дедлайна')}\n"
         f"Тип: {task.get('type', 'Не указан')}\n"
         f"Статус: {'Выполнена' if task.get('isCompleted') else 'Активна'}\n"
+        f"Ссылка: https://app.weeek.net/ws/{api.WORKSPACE_ID}/task/{task.get('id', 0)}\n"
     )
 
     await query.message.reply_text(message)
@@ -564,6 +894,17 @@ async def display_tasks(
     sort_field = context.user_data.get("sort_field")
     filter_field = context.user_data.get("filter_field")
     filter_value = context.user_data.get("filter_value")
+
+    # Загружаем список пользователей для маппинга ID к именам
+    assignees_response = api.get_assignees(board_id)
+    id_to_name = {}
+    if assignees_response.get("success") and "members" in assignees_response:
+        id_to_name = {
+            member[
+                "id"
+            ]: f"{member.get('firstName', '')} {member.get('lastName', '')}".strip()
+            for member in assignees_response["members"]
+        }
 
     # Получаем список колонок для названий
     try:
@@ -606,7 +947,6 @@ async def display_tasks(
         return ConversationHandler.END
 
     tasks = response["tasks"]
-
     # Фильтруем по колонке, если указана
     if selected_column:
         tasks = [
@@ -618,7 +958,9 @@ async def display_tasks(
     # Фильтруем по фильтру, если указан
     if filter_value is not None and filter_field:
         tasks = [
-            task for task in tasks if task.get(filter_field) == filter_value
+            task
+            for task in tasks
+            if filter_value in task.get(filter_field, [])
         ]
 
     # Сортировка
@@ -632,9 +974,16 @@ async def display_tasks(
             col_id = task.get("boardColumnId")
             col_name = column_names.get(col_id, f"Колонка {col_id}")
             title = task.get("title", "Без названия")
-            assignee = task.get("assignee", "Не назначен")
+            assignees_ids = task.get("assignees", [])
+            assignee = (
+                ", ".join(
+                    id_to_name.get(aid, str(aid)) for aid in assignees_ids
+                )
+                or "Не назначен"
+            )
             due_date = task.get("dueDate", "Без дедлайна")
             task_type = task.get("type", "Не указан")
+            link = task.get("id", "0")
             status = "Выполнена" if task.get("isCompleted") else "Активна"
 
             message = (
@@ -644,6 +993,7 @@ async def display_tasks(
                 f"Дедлайн: {due_date}\n"
                 f"Тип: {task_type}\n"
                 f"Статус: {status}\n"
+                f"Ссылка: https://app.weeek.net/ws/{api.WORKSPACE_ID}/task/{link}\n"
                 f"---\n"
             )
 
@@ -714,7 +1064,7 @@ async def handle_sorting(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     sort_field_map = {
         "sort_date": "createdAt",
-        "sort_assignee": "assignee",
+        "sort_assignee": "assignees",
         "sort_dueDate": "dueDate",
         "sort_type": "type",
     }
@@ -734,10 +1084,17 @@ async def handle_sorting(update: Update, context: ContextTypes.DEFAULT_TYPE):
             and "members" in assignees_response
         ):
             assignees = assignees_response["members"]
+            id_to_name = {
+                assignee[
+                    "id"
+                ]: f"{assignee.get('firstName','')} {assignee.get('lastName','')}".strip()
+                for assignee in assignees
+            }
+            context.user_data["id_to_name"] = id_to_name
             keyboard = []
             for assignee in assignees:
-                name = f"{assignee.get('firstName','')} {assignee.get('lastName','')}".strip()
-                user_id = assignee.get("id")
+                name = id_to_name[assignee["id"]]
+                user_id = assignee["id"]
                 keyboard.append(
                     [
                         InlineKeyboardButton(
@@ -767,13 +1124,11 @@ async def handle_sorting(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif sort_type == "sort_type":
         keyboard = [
             [
-                InlineKeyboardButton(
-                    "Действие", callback_data="type_Действие"
-                ),
-                InlineKeyboardButton("Встреча", callback_data="type_Встреча"),
+                InlineKeyboardButton("Действие", callback_data="type_action"),
+                InlineKeyboardButton("Встреча", callback_data="type_meet"),
             ],
             [
-                InlineKeyboardButton("Звонок", callback_data="type_Звонок"),
+                InlineKeyboardButton("Звонок", callback_data="type_call"),
                 InlineKeyboardButton("Все", callback_data="type_all"),
             ],
         ]
@@ -791,10 +1146,12 @@ async def choose_assignee(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if assignee_data == "all":
         context.user_data["filter_value"] = None
     else:
-        context.user_data["filter_value"] = assignee_data  # user_id
+        context.user_data["filter_value"] = str(
+            assignee_data
+        )  # Преобразуем в int
 
-    # Теперь фильтрация будет по task["assigneeId"]
-    context.user_data["filter_field"] = "assigneeId"
+    # Теперь фильтрация будет по task["assignees"]
+    context.user_data["filter_field"] = "assignees"
 
     return await display_tasks(update, context, query=query)
 
@@ -804,7 +1161,6 @@ async def enter_due_date(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if date == ".":
         context.user_data["filter_value"] = None
     else:
-        # Простая валидация, можно добавить больше
         context.user_data["filter_value"] = date
 
     return await display_tasks(update, context)
@@ -818,9 +1174,7 @@ async def choose_type(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if type_data == "all":
         context.user_data["filter_value"] = None
     else:
-        context.user_data["filter_value"] = (
-            type_data.lower()
-        )  # Предполагаем, что типы в нижнем регистре в задачах
+        context.user_data["filter_value"] = type_data
 
     return await display_tasks(update, context, query=query)
 
@@ -940,7 +1294,12 @@ start_conv = ConversationHandler(
     ],
     states={
         CHOOSING_PROJECT: [
-            MessageHandler(filters.TEXT & ~filters.COMMAND, choose_project),
+            CallbackQueryHandler(
+                handle_project_selection, pattern="^select_proj_"
+            ),
+            CallbackQueryHandler(
+                handle_project_pagination, pattern="^page_proj_"
+            ),
             MessageHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
@@ -949,26 +1308,28 @@ start_conv = ConversationHandler(
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
         ],
         CHOOSING_BOARD: [
+            CallbackQueryHandler(
+                handle_board_selection, pattern="^select_board_"
+            ),
+            CallbackQueryHandler(
+                handle_board_pagination, pattern="^page_board_"
+            ),
             MessageHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, choose_board),
         ],
         CHOOSING_SORT_COLUMN: [
             CallbackQueryHandler(choose_sort_column, pattern="^column_"),
             CallbackQueryHandler(handle_sorting, pattern="^sort_"),
-            MessageHandler(
-                filters.Regex("^📋 Показать задачи$"), show_tasks
-            ),  # Добавляем обработку
+            MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
             MessageHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
-            CallbackQueryHandler(handle_pagination, pattern="^page_"),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
         ],
         CHOOSING_COLUMN: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, choose_column),
@@ -976,7 +1337,7 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
         ],
         ENTER_TITLE: [
@@ -985,7 +1346,7 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
         ],
         ENTER_DESCRIPTION: [
@@ -994,7 +1355,7 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
         ],
         CHOOSING_ASSIGNEE: [
@@ -1003,9 +1364,8 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
-            CallbackQueryHandler(handle_pagination, pattern="^page_"),
         ],
         ENTER_DUE_DATE: [
             MessageHandler(filters.TEXT & ~filters.COMMAND, enter_due_date),
@@ -1013,9 +1373,8 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
-            CallbackQueryHandler(handle_pagination, pattern="^page_"),
         ],
         CHOOSING_TYPE: [
             CallbackQueryHandler(choose_type, pattern="^type_"),
@@ -1023,9 +1382,8 @@ start_conv = ConversationHandler(
                 filters.Regex("^🔄 Поменять проект$"), change_project
             ),
             MessageHandler(filters.Regex("^🔄 Поменять доску$"), change_board),
-            MessageHandler(filters.Regex("^Добавить задачу$"), add_task),
+            MessageHandler(filters.Regex("^Добавить задача$"), add_task),
             MessageHandler(filters.Regex("^📋 Показать задачи$"), show_tasks),
-            CallbackQueryHandler(handle_pagination, pattern="^page_"),
         ],
     },
     fallbacks=[CommandHandler("cancel", cancel)],

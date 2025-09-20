@@ -9,31 +9,56 @@ class Migration(migrations.Migration):
 
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='Priority',
+            name="Priority",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('name', models.CharField(max_length=64, unique=True, verbose_name='Название приоритета')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "name",
+                    models.CharField(
+                        max_length=64,
+                        unique=True,
+                        verbose_name="Название приоритета",
+                    ),
+                ),
             ],
             options={
-                'verbose_name': 'Приоритет',
-                'verbose_name_plural': 'Приоритеты',
+                "verbose_name": "Приоритет",
+                "verbose_name_plural": "Приоритеты",
             },
         ),
         migrations.CreateModel(
-            name='Settings',
+            name="Settings",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('api_key', models.CharField(max_length=256, verbose_name='API-KEY')),
-                ('default_priority', models.ForeignKey(default=settings.models.get_default_priority, on_delete=django.db.models.deletion.SET_DEFAULT, related_name='settings_default', to='settings.priority', verbose_name='Приоритет по-умолчанию')),
+                (
+                    "id",
+                    models.BigAutoField(
+                        auto_created=True,
+                        primary_key=True,
+                        serialize=False,
+                        verbose_name="ID",
+                    ),
+                ),
+                (
+                    "api_key",
+                    models.CharField(max_length=256, verbose_name="API-KEY"),
+                ),
+                # ('default_priority', models.ForeignKey(default=settings.models.get_default_priority, on_delete=django.db.models.deletion.SET_DEFAULT, related_name='settings_default', to='settings.priority', verbose_name='Приоритет по-умолчанию')),
             ],
             options={
-                'verbose_name': 'Настройки',
-                'verbose_name_plural': 'Настройки',
+                "verbose_name": "Настройки",
+                "verbose_name_plural": "Настройки",
             },
         ),
     ]

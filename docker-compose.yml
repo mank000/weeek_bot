@@ -1,0 +1,25 @@
+version: '3.8'
+
+volumes:
+  static:
+
+services:
+
+  backend:
+    build: ./backend/
+    volumes:
+        - static:/backend_static/
+
+  nginx:
+    depends_on:
+      - backend
+    build: ./nginx/
+    ports:
+      - "8000:80"
+    volumes:
+      - static:/staticfiles/
+  
+  bot:
+    depends_on:
+      - backend
+    build: ./bot/

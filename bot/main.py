@@ -7,7 +7,11 @@ from bot.handlers.commands import (
     change_board,
     change_project,
     choose_sort_column,
+    handle_board_pagination,
+    handle_board_selection,
     handle_pagination,
+    handle_project_pagination,
+    handle_project_selection,
     handle_sorting,
     show_task,
     start_conv,
@@ -46,6 +50,18 @@ def main():
     )
     application.add_handler(
         CallbackQueryHandler(handle_pagination, pattern="^page_"),
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_board_pagination, pattern="^page_"),
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_board_selection, pattern="^page_"),
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_project_pagination, pattern="^page_"),
+    )
+    application.add_handler(
+        CallbackQueryHandler(handle_project_selection, pattern="^page_"),
     )
 
     logger.info("Starting bot...")

@@ -1,0 +1,6 @@
+
+asgiref==3.9.1
+charset-normalizer==3.4.3
+Django==5.2.6
+sqlparse==0.5.3
+urllib3==2.5.0

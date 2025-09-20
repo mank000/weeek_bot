@@ -1,9 +1,8 @@
 import requests
+from config import settings
 
 session = requests.Session()
-session.headers.update(
-    {"Authorization": "Bearer 9d9634db-ecec-47fb-9880-11c086d70769"}
-)
+session.headers.update({"Authorization": f"Bearer {settings.WEEK_TOKEN}"})
 
 
 def get_data():
@@ -74,3 +73,6 @@ def create_task(project_id, column_id, title, description=""):
 
 def get_assignees(board_id):
     return session.get("https://api.weeek.net/public/v1/ws/members").json()
+
+
+WORKSPACE_ID = get_data()["workspace"]["id"]

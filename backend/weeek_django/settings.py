@@ -8,10 +8,12 @@ SECRET_KEY = (
 
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["localhost", "89.169.3.151", "backend"]
 
 
 INSTALLED_APPS = [
+    "admin_tools_stats",
+    "django_nvd3",
     "django.contrib.admin",
     "django.contrib.auth",
     "django.contrib.contenttypes",
@@ -19,6 +21,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "settings.apps.SettingsConfig",
+    "rest_framework",
 ]
 
 MIDDLEWARE = [
@@ -85,3 +88,9 @@ USE_TZ = True
 STATIC_URL = "static/"
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+CORS_ALLOWED_ORIGINS = ["localhost", "89.169.3.151"]
+CSRF_TRUSTED_ORIGINS = ["http://89.169.3.151"]
+
+STATIC_URL = "/static_backend/"
+STATIC_ROOT = "/backend_static/"
