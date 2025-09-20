@@ -2,6 +2,7 @@ import asyncio
 import re
 from datetime import datetime
 
+import pytz
 import requests
 from telegram import (
     InlineKeyboardButton,
@@ -20,6 +21,8 @@ from telegram.ext import (
 )
 
 from bot.utils import api, logger
+
+vladivostok_tz = pytz.timezone("Asia/Vladivostok")
 
 DJANGO_API_URL = "http://backend:8000/"
 
@@ -401,7 +404,7 @@ async def poll_board_updates(chat_id, project_id, board_id, context):
         response = api.get_tasks(projectId=project_id, boardId=board_id)
         if response.get("success") and "tasks" in response:
             tasks = response["tasks"]
-            now = datetime.now()
+            now = datetime.now(vladivostok_tz)
             for task in tasks:
                 task_id = task["id"]
                 col_id = task.get("boardColumnId")
@@ -488,7 +491,7 @@ async def poll_board_updates(chat_id, project_id, board_id, context):
 
                     if task_id not in tasks_state:
                         # Новая задача
-                        now = datetime.now()
+                        now = datetime.now(vladivostok_tz)
                         snapshot = {**temp_snapshot, "column_enter_time": now}
                         tasks_state[task_id] = snapshot
                         await context.bot.send_message(
@@ -509,14 +512,12 @@ async def poll_board_updates(chat_id, project_id, board_id, context):
                             changes.append(
                                 f"✏️ Название: {old['title']} → {snapshot['title']}"
                             )
-                        if old["description"] != snapshot["description"]:
-                            changes.append("📝 Описание изменилось")
                         if old["assignees_ids"] != snapshot["assignees_ids"]:
                             changes.append(
                                 f"👤 Исполнитель: {old['assignee']} → {snapshot['assignee']}"
                             )
                         if old["boardColumn"] != snapshot["boardColumn"]:
-                            now = datetime.now()
+                            now = datetime.now(vladivostok_tz)
                             logger.logger.info(old["column_enter_time"])
                             time_spent = (
                                 now - old["column_enter_time"]

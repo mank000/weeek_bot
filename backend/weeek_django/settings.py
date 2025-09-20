@@ -12,7 +12,6 @@ ALLOWED_HOSTS = ["localhost", "89.169.3.151", "backend"]
 
 
 INSTALLED_APPS = [
-    "admin_tools_stats",
     "django_nvd3",
     "django.contrib.admin",
     "django.contrib.auth",
